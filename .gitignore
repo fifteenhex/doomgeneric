@@ -11,3 +11,6 @@ Release/
 Build/
 doomgeneric
 doomgeneric.map
+build_smol2d/
+doomgeneric_smol2d
+doomgeneric_smol2d.map
