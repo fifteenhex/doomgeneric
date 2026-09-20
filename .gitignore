@@ -9,8 +9,12 @@
 Debug/
 Release/
 Build/
-doomgeneric
+# The built binary, which shares its name with the source directory -- so
+# anchor it, or the directory is ignored too and nothing new in it can be added.
+/doomgeneric/doomgeneric
 doomgeneric.map
 build_smol2d/
 doomgeneric_smol2d
 doomgeneric_smol2d.map
+build_rootfs/
+doom.tar

@@ -1,0 +1,108 @@
+################################################################
+#
+# Package the smol2d doom -- the binary and id's shareware wad --
+# into a tarball to graft onto a rootfs:
+#
+#    make -f Makefile.rootfs \
+#        NOLIBCDIR=path/to/linux/tools/include/nolibc
+#
+# which leaves doom.tar beside this makefile.
+#
+# NOLIBCDIR has to come from outside, because nolibc lives in the
+# linux source and unpacking a kernel is not this repo's business.
+# Everything else -- smol2d, the submodules its DRM backend needs,
+# and the wad -- is fetched here, so that something wanting a doom
+# to drop into an initramfs only has to clone this and ask for it.
+#
+# Overrides worth knowing:
+#
+#    SMOL2DDIR   an smol2d checkout to use instead of cloning one
+#    SMOL2D_REF  the branch to clone; the DRM backend this needs is
+#                not on smol2d's master
+#    WAD         a wad you already have, instead of fetching one
+#    TARBALL     where to leave the tar
+#    PREFIX      where the game lands inside it
+#
+
+# Fetching a wad or tidying up does not need a toolchain.
+ifndef NOLIBCDIR
+ifeq (,$(filter clean distclean wad,$(MAKECMDGOALS)))
+$(error Please pass NOLIBCDIR with the path to your copy of nolibc (tools/include/nolibc/ in the linux source))
+endif
+endif
+
+BUILDDIR ?= build_rootfs
+
+SMOL2D_URL ?= https://github.com/fifteenhex/smol2d.git
+SMOL2D_REF ?= intern-doom
+SMOL2DDIR  ?= $(CURDIR)/$(BUILDDIR)/smol2d
+
+# id's shareware episode, which they have always let anyone pass around. The
+# checksum is the part worth pinning: a wad is a 4MB blob off the internet, and
+# the wrong one fails deep inside doom rather than at the point it was fetched.
+WAD_URL ?= https://github.com/Akbar30Bill/DOOM_wads/raw/master/doom1.wad
+WAD_MD5 ?= f0cefca49926d00903cf57551d901abe
+WAD     ?= $(CURDIR)/$(BUILDDIR)/doom1.wad
+
+PREFIX  ?= /usr
+TARBALL ?= $(CURDIR)/doom.tar
+STRIP   ?= $(CROSS_COMPILE)strip
+
+OUTPUT = $(CURDIR)/doomgeneric_smol2d
+STAGE  = $(BUILDDIR)/stage
+
+all: $(TARBALL)
+.PHONY: all
+
+# Only fires when SMOL2DDIR does not exist, so passing one of your own
+# quietly skips the clone.
+$(SMOL2DDIR):
+	git clone --depth 1 -b $(SMOL2D_REF) $(SMOL2D_URL) $@
+	# smoldrm is the DRM wrapper the backend sits on and smolinput is the
+	# keyboard. fbdevgl is the third submodule and nothing here wants it.
+	git -C $@ submodule update --init --depth 1 smoldrm smolinput
+
+# Always recursed into: the sub-makes know what is out of date, this does not.
+smol2d: | $(SMOL2DDIR)
+	$(MAKE) -C $(SMOL2DDIR)/libsmol2ddrm NOLIBCDIR=$(NOLIBCDIR)
+.PHONY: smol2d
+
+doom: smol2d
+	$(MAKE) -f Makefile.smol2d NOLIBCDIR=$(NOLIBCDIR) SMOL2DDIR=$(SMOL2DDIR)
+.PHONY: doom
+
+$(WAD):
+	mkdir -p $(dir $@)
+	curl -fL --retry 3 --retry-delay 2 -o $@.tmp '$(WAD_URL)'
+	echo "$(WAD_MD5)  $@.tmp" | md5sum -c -
+	mv $@.tmp $@
+
+wad: $(WAD)
+.PHONY: wad
+
+$(TARBALL): doom $(WAD)
+	rm -rf $(STAGE)
+	mkdir -p $(STAGE)$(PREFIX)/bin $(STAGE)$(PREFIX)/share/doom
+	$(STRIP) -o $(STAGE)$(PREFIX)/bin/doom $(OUTPUT)
+	chmod 0755 $(STAGE)$(PREFIX)/bin/doom
+	cp $(WAD) $(STAGE)$(PREFIX)/share/doom/doom1.wad
+	tar -C $(STAGE) -cf $@ .
+	@echo "[$@]"
+	@echo "  $(PREFIX)/bin/doom"
+	@echo "  $(PREFIX)/share/doom/doom1.wad"
+	@echo "doomgeneric's own iwad search is compiled out, so run it as:"
+	@echo "  doom -iwad $(PREFIX)/share/doom/doom1.wad"
+
+tarball: $(TARBALL)
+.PHONY: tarball
+
+clean:
+	-$(MAKE) -f Makefile.smol2d NOLIBCDIR=. SMOL2DDIR=. clean
+	rm -rf $(STAGE)
+	rm -f $(TARBALL)
+.PHONY: clean
+
+# ...and the downloads too
+distclean: clean
+	rm -rf $(BUILDDIR)
+.PHONY: distclean
