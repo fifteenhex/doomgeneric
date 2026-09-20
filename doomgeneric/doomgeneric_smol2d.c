@@ -87,10 +87,23 @@ void DG_Init()
     struct smol2d_tex *backbuffer;
     struct smol2d_op op = { 0 };
 
+    /*
+     * Doom is an indexed colour game and wants a C8 screen, but scanning C8
+     * out is a rare thing for a display controller to still do -- a
+     * virtio-gpu will only make a 32bpp buffer, and asking it for 8 gets
+     * EINVAL. Where that happens, have smol2d keep the indexed surface and
+     * expand it through the palette on the way to the screen instead. It
+     * costs a lookup per pixel per frame and looks identical.
+     */
     if (smol2d_init(&s_Cntx, SMOL2D_CS_C8))
     {
-        printf("DG_Init: smol2d_init failed\n");
-        exit(1);
+        printf("DG_Init: no C8 screen here, emulating one\n");
+
+        if (smol2d_init(&s_Cntx, SMOL2D_CS_C8_EMULATED))
+        {
+            printf("DG_Init: smol2d_init failed\n");
+            exit(1);
+        }
     }
 
     if (smol2d_tex_create(s_Cntx, &s_Frame,
