@@ -1,0 +1,53 @@
+name: rootfs
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      smol2d_ref:
+        description: smol2d branch to build against
+        required: false
+        default: ''
+
+jobs:
+  tarball:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # The one thing Makefile.rootfs will not fetch for itself, because
+      # unpacking a kernel is not this repo's business. Sparse and blobless:
+      # nolibc is a directory of headers, not a kernel.
+      - name: nolibc
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/torvalds/linux.git linux
+          git -C linux sparse-checkout set tools/include/nolibc
+
+      # smol2d and the wad are fetched by the makefile, so this builds it the
+      # way anyone else would -- including which smol2d branch it decides on,
+      # which is a thing worth having CI be wrong about rather than the
+      # workflow quietly picking a different one.
+      - name: tarball
+        run: |
+          make -C doomgeneric -f Makefile.rootfs \
+            NOLIBCDIR=$PWD/linux/tools/include/nolibc \
+            ${{ inputs.smol2d_ref && format('SMOL2D_REF={0}', inputs.smol2d_ref) || '' }}
+
+      # `make` exiting 0 only says the recipe ran; this says the tar holds what
+      # a rootfs is going to be asked to unpack.
+      - name: check the tarball
+        run: |
+          tar -tf doomgeneric/doom.tar
+          for f in ./usr/bin/doom ./usr/share/doom/doom1.wad; do
+            tar -tf doomgeneric/doom.tar | grep -qx "$f" \
+              || { echo "$f missing from the tarball"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doom-rootfs
+          path: doomgeneric/doom.tar
+          retention-days: 7
